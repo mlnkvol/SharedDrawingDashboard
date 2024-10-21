@@ -1,0 +1,170 @@
+﻿@{
+    ViewData["Title"] = "Shared Drawing Dashboard";
+}
+
+<h2>Shared Drawing Dashboard</h2>
+
+
+<div style="margin-bottom: 10px;">
+    <label for="colorPicker">Колір:</label>
+    <input type="color" id="colorPicker" value="#000000">
+
+    <label for="brushWidth">Ширина пензлика:</label>
+    <input type="range" id="brushWidth" min="1" max="10" value="2">
+
+    <button id="clearButton">Очистити полотно</button>
+    <button id="saveButton">Зберегти малюнок</button>
+    <button id="clearGalleryButton">Очистити галерею</button> 
+</div>
+
+
+<canvas id="drawingCanvas" width="800" height="600" style="border: 1px solid black;"></canvas>
+
+
+<h3>Галерея</h3>
+<div id="gallery" style="display: flex; flex-wrap: wrap; gap: 10px;"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/5.0.15/signalr.min.js"></script>
+<script>
+    const canvas = document.getElementById('drawingCanvas');
+    const context = canvas.getContext('2d');
+    let isDrawing = false;
+    let lastPosition = null;
+    let strokeColor = document.getElementById('colorPicker').value;
+    let strokeWidth = document.getElementById('brushWidth').value;
+
+
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl("/drawingHub")
+        .build();
+
+    connection.start().catch(err => console.error(err.toString()));
+
+    document.getElementById('colorPicker').addEventListener('input', (event) => {
+        strokeColor = event.target.value;
+    });
+
+    document.getElementById('brushWidth').addEventListener('input', (event) => {
+        strokeWidth = event.target.value;
+    });
+
+
+    document.getElementById('clearButton').addEventListener('click', () => {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        connection.invoke("ClearCanvas", "User1");
+    });
+
+
+    function loadGalleryFromLocalStorage() {
+        const savedImages = JSON.parse(localStorage.getItem('galleryImages')) || [];
+        savedImages.forEach(imgDataUrl => {
+            const imgElement = document.createElement('img');
+            imgElement.src = imgDataUrl;
+            imgElement.style.width = '200px';
+            imgElement.style.height = '150px';
+            imgElement.style.border = '1px solid black';
+            document.getElementById('gallery').appendChild(imgElement);
+        });
+    }
+
+
+    window.addEventListener('load', () => {
+        loadGalleryFromLocalStorage();
+    });
+
+
+    function saveImageToLocalStorage(imgDataUrl) {
+        const savedImages = JSON.parse(localStorage.getItem('galleryImages')) || [];
+        savedImages.push(imgDataUrl);
+        localStorage.setItem('galleryImages', JSON.stringify(savedImages));
+    }
+
+
+    document.getElementById('saveButton').addEventListener('click', () => {
+        const imgDataUrl = canvas.toDataURL('image/png');
+
+        const imgElement = document.createElement('img');
+        imgElement.src = imgDataUrl;
+        imgElement.style.width = '200px';
+        imgElement.style.height = '150px';
+        imgElement.style.border = '1px solid black';
+        document.getElementById('gallery').appendChild(imgElement);
+
+        saveImageToLocalStorage(imgDataUrl);
+    });
+
+    document.getElementById('clearGalleryButton').addEventListener('click', () => {
+        localStorage.removeItem('galleryImages'); 
+        document.getElementById('gallery').innerHTML = ''; 
+    });
+
+    connection.on("ClearCanvas", () => {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+    });
+
+    canvas.addEventListener('mousedown', (event) => {
+        isDrawing = true;
+        lastPosition = { x: event.offsetX, y: event.offsetY };
+
+        context.beginPath();
+        context.arc(lastPosition.x, lastPosition.y, strokeWidth / 2, 0, Math.PI * 2, true);
+        context.fillStyle = strokeColor;
+        context.fill();
+
+        connection.invoke("SendDrawingData", "User1", JSON.stringify({ x: lastPosition.x, y: lastPosition.y, strokeColor, strokeWidth }));
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        isDrawing = false;
+        lastPosition = null;
+    });
+
+    canvas.addEventListener('mousemove', (event) => {
+        if (!isDrawing) return;
+
+        const x = event.offsetX;
+        const y = event.offsetY;
+
+        context.lineWidth = strokeWidth;
+        context.lineCap = 'round';
+        context.strokeStyle = strokeColor;
+
+        if (lastPosition) {
+            context.beginPath();
+            context.moveTo(lastPosition.x, lastPosition.y);
+            context.lineTo(x, y);
+            context.stroke();
+        }
+
+        lastPosition = { x, y };
+
+        connection.invoke("SendDrawingData", "User1", JSON.stringify({ x, y, strokeColor, strokeWidth }));
+    });
+
+    connection.on("ReceiveDrawingData", (user, data) => {
+        const { x, y, strokeColor, strokeWidth } = JSON.parse(data);
+
+        context.lineWidth = strokeWidth;
+        context.lineCap = 'round';
+        context.strokeStyle = strokeColor;
+
+        if (lastPosition) {
+            context.beginPath();
+            context.moveTo(lastPosition.x, lastPosition.y);
+            context.lineTo(x, y);
+            context.stroke();
+        }
+
+        lastPosition = { x, y };
+    });
+
+    window.addEventListener('blur', () => {
+        lastPosition = null;
+        isDrawing = false;
+    });
+
+    window.addEventListener('focus', () => {
+        lastPosition = null;
+        isDrawing = false;
+    });
+</script>
